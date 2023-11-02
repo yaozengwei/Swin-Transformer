@@ -7,6 +7,7 @@
 
 from functools import partial
 from torch import optim as optim
+from scaled_adam import ScaledAdam
 
 try:
     from apex.optimizers import FusedAdam, FusedLAMB
@@ -86,7 +87,7 @@ def get_pretrain_param_groups(model, skip_list=(), skip_keywords=()):
     no_decay = []
     has_decay_name = []
     no_decay_name = []
-    
+
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue

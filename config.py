@@ -150,6 +150,11 @@ _C.TRAIN.EPOCHS = 300
 _C.TRAIN.WARMUP_EPOCHS = 20
 _C.TRAIN.WEIGHT_DECAY = 0.05
 _C.TRAIN.BASE_LR = 5e-4
+# Only for ScaledAdam optimizer ----
+_C.TRAIN.LR_EPOCHES = 30
+_C.TRAIN.LR_BATCHES = 7500
+# ----------------------------------
+_C.TRAIN.BASE_LR = 5e-4
 _C.TRAIN.WARMUP_LR = 5e-7
 _C.TRAIN.MIN_LR = 5e-6
 # Clip gradient norm
