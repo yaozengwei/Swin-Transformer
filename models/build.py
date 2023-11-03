@@ -10,6 +10,7 @@ from .swin_transformer_v2 import SwinTransformerV2
 from .swin_transformer_moe import SwinTransformerMoE
 from .swin_mlp import SwinMLP
 from .simmim import build_simmim
+from .swin_share_attn import SwinTransformer as SwinTransformer2
 
 
 def build_model(config, is_pretrain=False):
@@ -50,6 +51,27 @@ def build_model(config, is_pretrain=False):
                                 patch_norm=config.MODEL.SWIN.PATCH_NORM,
                                 use_checkpoint=config.TRAIN.USE_CHECKPOINT,
                                 fused_window_process=config.FUSED_WINDOW_PROCESS)
+    elif model_type == 'swin2':
+        model = SwinTransformer2(img_size=config.DATA.IMG_SIZE,
+                                 patch_size=config.MODEL.SWIN2.PATCH_SIZE,
+                                 in_chans=config.MODEL.SWIN2.IN_CHANS,
+                                 num_classes=config.MODEL.NUM_CLASSES,
+                                 embed_dim=config.MODEL.SWIN2.EMBED_DIM,
+                                 depths=config.MODEL.SWIN2.DEPTHS,
+                                 num_heads=config.MODEL.SWIN2.NUM_HEADS,
+                                 query_head_dims=config.MODEL.SWIN2.QUERY_HEAD_DIMS,
+                                 value_head_dims=config.MODEL.SWIN2.VALUE_HEAD_DIMS,
+                                 window_size=config.MODEL.SWIN2.WINDOW_SIZE,
+                                 mlp_ratio=config.MODEL.SWIN2.MLP_RATIO,
+                                 qkv_bias=config.MODEL.SWIN2.QKV_BIAS,
+                                 qk_scale=config.MODEL.SWIN2.QK_SCALE,
+                                 drop_rate=config.MODEL.DROP_RATE,
+                                 drop_path_rate=config.MODEL.DROP_PATH_RATE,
+                                 ape=config.MODEL.SWIN2.APE,
+                                 norm_layer=layernorm,
+                                 patch_norm=config.MODEL.SWIN2.PATCH_NORM,
+                                 use_checkpoint=config.TRAIN.USE_CHECKPOINT,
+                                 fused_window_process=config.FUSED_WINDOW_PROCESS)
     elif model_type == 'swinv2':
         model = SwinTransformerV2(img_size=config.DATA.IMG_SIZE,
                                   patch_size=config.MODEL.SWINV2.PATCH_SIZE,

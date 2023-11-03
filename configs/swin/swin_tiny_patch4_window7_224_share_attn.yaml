@@ -1,0 +1,19 @@
+MODEL:
+  TYPE: swin2
+  NAME: swin_tiny_patch4_window7_224_share_attn
+  DROP_PATH_RATE: 0.2
+  SWIN2:
+    EMBED_DIM: 96
+    DEPTHS: [ 2, 2, 4, 2 ]
+    NUM_HEADS: [ 3, 6, 12, 24 ]
+    QUERY_HEAD_DIMS: [ 32, 32, 32, 32 ]
+    VALUE_HEAD_DIMS: [ 32, 32, 32, 32 ]
+    WINDOW_SIZE: 7
+    MLP_RATIO: 2.
+
+      # # for ScaledAdam optimizer
+      # TRAIN:
+      #   BASE_LR: 0.03
+      #   LR_BATCHES: 7500
+      #   LR_EPOCHES: 30
+      #   CLIP_GRAD: None
