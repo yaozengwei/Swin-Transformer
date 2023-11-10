@@ -26,7 +26,7 @@ from data import build_loader
 from lr_scheduler import build_scheduler
 from optimizer import build_optimizer
 from logger import create_logger
-from utils import load_checkpoint, load_pretrained, save_checkpoint, NativeScalerWithGradNormCount, auto_resume_helper, \
+from utils import load_averaged_model, load_checkpoint, load_pretrained, save_checkpoint, NativeScalerWithGradNormCount, auto_resume_helper, \
     reduce_tensor
 
 
@@ -61,6 +61,8 @@ def parse_option():
                         help='root of output folder, the full path is <output>/<model_name>/<tag> (default: output)')
     parser.add_argument('--tag', help='tag of experiment')
     parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
+    parser.add_argument('--eval_avg', type=int, default=1, help='Number of checkpoints for model average')
+    parser.add_argument('--eval_epoch', type=int, default=300, help='Epoch end index to load checkpoints for model average')
     parser.add_argument('--throughput', action='store_true', help='Test throughput only')
 
     # distributed training
@@ -115,6 +117,12 @@ def main(config):
         criterion = torch.nn.CrossEntropyLoss()
 
     max_accuracy = 0.0
+
+    if config.EVAL_MODE and config.EVAL_AVG > 1:
+        load_averaged_model(config, model_without_ddp, logger)
+        acc1, acc5, loss = validate(config, data_loader_val, model)
+        logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
+        return
 
     if config.TRAIN.AUTO_RESUME:
         resume_file = auto_resume_helper(config.OUTPUT)
@@ -333,9 +341,14 @@ if __name__ == '__main__':
     config.freeze()
 
     os.makedirs(config.OUTPUT, exist_ok=True)
-    logger = create_logger(output_dir=config.OUTPUT, dist_rank=dist.get_rank(), name=f"{config.MODEL.NAME}")
+    logger = create_logger(
+        output_dir=config.OUTPUT,
+        dist_rank=dist.get_rank(),
+        name=f"{config.MODEL.NAME}",
+        suffix=f"eval-epoch-{config.EVAL_EPOCH}-avg-{config.EVAL_AVG}" if config.EVAL_MODE else None,
+    )
 
-    if dist.get_rank() == 0:
+    if dist.get_rank() == 0 and not config.EVAL_MODE:
         path = os.path.join(config.OUTPUT, "config.json")
         with open(path, "w") as f:
             f.write(config.dump())

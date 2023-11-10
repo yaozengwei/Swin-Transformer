@@ -95,6 +95,22 @@ _C.MODEL.SWIN2.QK_SCALE = None
 _C.MODEL.SWIN2.APE = False
 _C.MODEL.SWIN2.PATCH_NORM = True
 
+# Swin Transformer parameters (exp)
+_C.MODEL.SWIN4 = CN()
+_C.MODEL.SWIN4.PATCH_SIZE = 4
+_C.MODEL.SWIN4.IN_CHANS = 3
+_C.MODEL.SWIN4.EMBED_DIMS = [128, 256, 384, 512]
+_C.MODEL.SWIN4.DEPTHS = [3, 3, 3, 3]
+_C.MODEL.SWIN4.NUM_HEADS = [4, 8, 12, 16]
+_C.MODEL.SWIN4.QUERY_HEAD_DIMS = [32, 32, 32, 32]
+_C.MODEL.SWIN4.VALUE_HEAD_DIMS = [32, 32, 32, 32]
+_C.MODEL.SWIN4.WINDOW_SIZE = 7
+_C.MODEL.SWIN4.MLP_RATIO = 2.
+_C.MODEL.SWIN4.QKV_BIAS = True
+_C.MODEL.SWIN4.QK_SCALE = None
+_C.MODEL.SWIN4.APE = False
+_C.MODEL.SWIN4.PATCH_NORM = True
+
 # Swin Transformer V2 parameters
 _C.MODEL.SWINV2 = CN()
 _C.MODEL.SWINV2.PATCH_SIZE = 4
@@ -273,6 +289,9 @@ _C.PRINT_FREQ = 10
 _C.SEED = 0
 # Perform evaluation only, overwritten by command line argument
 _C.EVAL_MODE = False
+# When using averaged model for inference
+_C.EVAL_EPOCH = 300
+_C.EVAL_AVG = 1
 # Test throughput only, overwritten by command line argument
 _C.THROUGHPUT_MODE = False
 # local rank for DistributedDataParallel, given by command line argument
@@ -338,6 +357,10 @@ def update_config(config, args):
         config.TAG = args.tag
     if _check_args('eval'):
         config.EVAL_MODE = True
+    if _check_args('eval_epoch'):
+        config.EVAL_EPOCH = args.eval_epoch
+    if _check_args('eval_avg'):
+        config.EVAL_AVG = args.eval_avg
     if _check_args('throughput'):
         config.THROUGHPUT_MODE = True
 

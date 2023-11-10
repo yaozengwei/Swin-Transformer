@@ -13,6 +13,7 @@ from torch._six import inf
 
 def load_checkpoint(config, model, optimizer, lr_scheduler, loss_scaler, logger):
     logger.info(f"==============> Resuming form {config.MODEL.RESUME}....................")
+
     if config.MODEL.RESUME.startswith('https'):
         checkpoint = torch.hub.load_state_dict_from_url(
             config.MODEL.RESUME, map_location='cpu', check_hash=True)
@@ -36,6 +37,16 @@ def load_checkpoint(config, model, optimizer, lr_scheduler, loss_scaler, logger)
     del checkpoint
     torch.cuda.empty_cache()
     return max_accuracy
+
+
+def load_averaged_model(config, model, logger):
+    logger.info("==============> Loading averaged model for inference....................")
+
+    filenames = find_checkpoints_for_avg(config.OUTPUT, config.EVAL_EPOCH, config.EVAL_AVG)
+    print(f"Averaging {filenames}")
+    msg = model.load_state_dict(average_checkpoints(filenames), strict=False)
+    logger.info(msg)
+    return 0.0
 
 
 def load_pretrained(config, model, logger):
@@ -167,6 +178,57 @@ def auto_resume_helper(output_dir):
     else:
         resume_file = None
     return resume_file
+
+
+def find_checkpoints_for_avg(output_dir, epoch, avg):
+    start = epoch - avg + 1
+    filenames = []
+    for i in range(start, epoch + 1):
+        if i >= 0:
+            filenames.append(os.path.join(output_dir, f"ckpt_epoch_{i}.pth"))
+    return filenames
+
+
+def average_checkpoints(filenames) -> dict:
+    """Average a list of checkpoints.
+
+    Args:
+      filenames:
+        Filenames of the checkpoints to be averaged. We assume all
+        checkpoints are saved by :func:`save_checkpoint`.
+
+    Returns:
+      Return a dict (i.e., state_dict) which is the average of all
+      model state dicts contained in the checkpoints.
+    """
+    n = len(filenames)
+
+    avg = torch.load(filenames[0], map_location='cpu')["model"]
+
+    # Identify shared parameters. Two parameters are said to be shared
+    # if they have the same data_ptr
+    uniqued = dict()
+
+    for k, v in avg.items():
+        v_data_ptr = v.data_ptr()
+        if v_data_ptr in uniqued:
+            continue
+        uniqued[v_data_ptr] = k
+
+    uniqued_names = list(uniqued.values())
+
+    for i in range(1, n):
+        state_dict = torch.load(filenames[i], map_location='cpu')["model"]
+        for k in uniqued_names:
+            avg[k] += state_dict[k]
+
+    for k in uniqued_names:
+        if avg[k].is_floating_point():
+            avg[k] /= n
+        else:
+            avg[k] //= n
+
+    return avg
 
 
 def reduce_tensor(tensor):
