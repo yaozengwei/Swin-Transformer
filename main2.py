@@ -16,7 +16,6 @@ import numpy as np
 
 from typing import Union
 
-import diagnostics
 import torch
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
@@ -25,7 +24,9 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import accuracy, AverageMeter
 
+import diagnostics
 from config import get_config
+from hooks import register_inf_check_hooks
 from models import build_model
 from data import build_loader
 from scaled_adam import Eden, ScaledAdam, get_parameter_groups_with_lrs
@@ -78,6 +79,8 @@ def parse_option():
                         help='overwrite optimizer if provided, can be adamw/sgd/fused_adam/fused_lamb.')
     parser.add_argument('--print_diagnostics', action='store_true',
                         help='Accumulate stats on activations, print them and exit.')
+    parser.add_argument('--inf_check', action='store_true',
+                        help='Add hooks to check for infinite module outputs and gradients.')
 
     args, unparsed = parser.parse_known_args()
 
@@ -150,7 +153,7 @@ def main(config):
 
     if config.MODEL.RESUME:
         max_accuracy = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, loss_scaler)
-        if not config.TRAIN.PRINT_DIAGNOSTICS:
+        if not config.TRAIN.PRINT_DIAGNOSTICS and not config.TRAIN.INF_CHECK:
             acc1, acc5, loss = validate(config, data_loader_val, model)
             logging.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
             if config.EVAL_MODE:
@@ -170,6 +173,9 @@ def main(config):
             512
         )  # allow 4 megabytes per sub-module
         diagnostic = diagnostics.attach_diagnostics(model, opts)
+
+    if config.TRAIN.INF_CHECK:
+        register_inf_check_hooks(model)
 
     logging.info("Start training")
     start_time = time.time()
@@ -374,7 +380,7 @@ if __name__ == '__main__':
     os.makedirs(config.OUTPUT, exist_ok=True)
     setup_logger(f"{config.OUTPUT}/log/log-train")
 
-    if dist.get_rank() == 0 and not config.EVAL_MODE and not config.TRAIN.PRINT_DIAGNOSTICS:
+    if dist.get_rank() == 0 and not config.EVAL_MODE and not config.TRAIN.PRINT_DIAGNOSTICS and not config.TRAIN.INF_CHECK:
         path = os.path.join(config.OUTPUT, "config.json")
         with open(path, "w") as f:
             f.write(config.dump())

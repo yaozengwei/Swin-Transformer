@@ -230,6 +230,9 @@ _C.TRAIN.LAYER_DECAY = 1.0
 _C.TRAIN.MOE = CN()
 # Only save model on master device
 _C.TRAIN.MOE.SAVE_MASTER = False
+
+_C.TRAIN.PRINT_DIAGNOSTICS = False
+
 # -----------------------------------------------------------------------------
 # Augmentation settings
 # -----------------------------------------------------------------------------
@@ -373,9 +376,14 @@ def update_config(config, args):
         config.FUSED_WINDOW_PROCESS = True
     if _check_args('fused_layernorm'):
         config.FUSED_LAYERNORM = True
-    ## Overwrite optimizer if not None, currently we use it for [fused_adam, fused_lamb]
+    # Overwrite optimizer if not None, currently we use it for [fused_adam, fused_lamb]
     if _check_args('optim'):
         config.TRAIN.OPTIMIZER.NAME = args.optim
+
+    if _check_args('print_diagnostics'):
+        config.TRAIN.PRINT_DIAGNOSTICS = True
+    if _check_args('inf_check'):
+        config.TRAIN.INF_CHECK = True
 
     # set local rank for distributed training
     config.LOCAL_RANK = args.local_rank
