@@ -5,6 +5,7 @@
 # Written by Ze Liu
 # --------------------------------------------------------
 
+import logging
 import os
 import time
 import json
@@ -13,9 +14,13 @@ import argparse
 import datetime
 import numpy as np
 
+from typing import Union
+
+import diagnostics
 import torch
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import accuracy, AverageMeter
@@ -24,8 +29,7 @@ from config import get_config
 from models import build_model
 from data import build_loader
 from scaled_adam import Eden, ScaledAdam, get_parameter_groups_with_lrs
-from logger import create_logger
-from utils import load_checkpoint, load_pretrained, save_checkpoint, NativeScalerWithGradNormCount, auto_resume_helper, \
+from utils import load_checkpoint, load_pretrained, save_checkpoint, setup_logger, NativeScalerWithGradNormCount, auto_resume_helper, \
     reduce_tensor
 
 
@@ -72,6 +76,8 @@ def parse_option():
     # overwrite optimizer in config (*.yaml) if specified, e.g., fused_adam/fused_lamb
     parser.add_argument('--optim', type=str,
                         help='overwrite optimizer if provided, can be adamw/sgd/fused_adam/fused_lamb.')
+    parser.add_argument('--print_diagnostics', action='store_true',
+                        help='Accumulate stats on activations, print them and exit.')
 
     args, unparsed = parser.parse_known_args()
 
@@ -80,18 +86,29 @@ def parse_option():
     return args, config
 
 
+def set_batch_count(model: Union[torch.nn.Module, DDP], batch_count: float) -> None:
+    if isinstance(model, DDP):
+        # get underlying nn.Module
+        model = model.module
+    for name, module in model.named_modules():
+        if hasattr(module, "batch_count"):
+            module.batch_count = batch_count
+        if hasattr(module, "name"):
+            module.name = name
+
+
 def main(config):
     dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config)
 
-    logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
+    logging.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
     model = build_model(config)
-    logger.info(str(model))
+    logging.info(str(model))
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(f"number of params: {n_parameters}")
+    logging.info(f"number of params: {n_parameters}")
     if hasattr(model, 'flops'):
         flops = model.flops()
-        logger.info(f"number of GFLOPs: {flops / 1e9}")
+        logging.info(f"number of GFLOPs: {flops / 1e9}")
 
     model.cuda()
     model_without_ddp = model
@@ -100,12 +117,13 @@ def main(config):
         get_parameter_groups_with_lrs(model, lr=config.TRAIN.BASE_LR, include_names=True),
         lr=config.TRAIN.BASE_LR,  # should have no effect
         clipping_scale=2.0,
+        betas=config.TRAIN.OPTIMIZER.BETAS,
     )
     assert config.TRAIN.ACCUMULATION_STEPS == 1, "Not support gradient accumulation yet."
     lr_scheduler = Eden(optimizer, config.TRAIN.LR_BATCHES, config.TRAIN.LR_EPOCHES)
 
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
-    loss_scaler = NativeScalerWithGradNormCount()
+    model = DDP(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
+    loss_scaler = NativeScalerWithGradNormCount(amp_enabled=config.AMP_ENABLE, init_scale=1.0)
 
     if config.AUG.MIXUP > 0.:
         # smoothing is handled with mixup label transform
@@ -117,53 +135,65 @@ def main(config):
 
     max_accuracy = 0.0
 
-    if config.TRAIN.AUTO_RESUME:
+    # if config.TRAIN.AUTO_RESUME:
+    if False:
         resume_file = auto_resume_helper(config.OUTPUT)
         if resume_file:
             if config.MODEL.RESUME:
-                logger.warning(f"auto-resume changing resume file from {config.MODEL.RESUME} to {resume_file}")
+                logging.warning(f"auto-resume changing resume file from {config.MODEL.RESUME} to {resume_file}")
             config.defrost()
             config.MODEL.RESUME = resume_file
             config.freeze()
-            logger.info(f'auto resuming from {resume_file}')
+            logging.info(f'auto resuming from {resume_file}')
         else:
-            logger.info(f'no checkpoint found in {config.OUTPUT}, ignoring auto resume')
+            logging.info(f'no checkpoint found in {config.OUTPUT}, ignoring auto resume')
 
     if config.MODEL.RESUME:
-        max_accuracy = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, loss_scaler, logger)
-        acc1, acc5, loss = validate(config, data_loader_val, model)
-        logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
-        if config.EVAL_MODE:
-            return
+        max_accuracy = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, loss_scaler)
+        if not config.TRAIN.PRINT_DIAGNOSTICS:
+            acc1, acc5, loss = validate(config, data_loader_val, model)
+            logging.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
+            if config.EVAL_MODE:
+                return
 
     if config.MODEL.PRETRAINED and (not config.MODEL.RESUME):
-        load_pretrained(config, model_without_ddp, logger)
+        load_pretrained(config, model_without_ddp)
         acc1, acc5, loss = validate(config, data_loader_val, model)
-        logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
+        logging.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
 
     if config.THROUGHPUT_MODE:
-        throughput(data_loader_val, model, logger)
+        throughput(data_loader_val, model)
         return
 
-    logger.info("Start training")
+    if config.TRAIN.PRINT_DIAGNOSTICS:
+        opts = diagnostics.TensorDiagnosticOptions(
+            512
+        )  # allow 4 megabytes per sub-module
+        diagnostic = diagnostics.attach_diagnostics(model, opts)
+
+    logging.info("Start training")
     start_time = time.time()
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
         data_loader_train.sampler.set_epoch(epoch)
         lr_scheduler.step_epoch(epoch)
         train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler,
                         loss_scaler)
+
+        if config.TRAIN.PRINT_DIAGNOSTICS:
+            diagnostic.print_diagnostics()
+            return
+
         if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
-            save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, loss_scaler,
-                            logger)
+            save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, loss_scaler)
 
         acc1, acc5, loss = validate(config, data_loader_val, model)
-        logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
+        logging.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
         max_accuracy = max(max_accuracy, acc1)
-        logger.info(f'Max accuracy: {max_accuracy:.2f}%')
+        logging.info(f'Max accuracy: {max_accuracy:.2f}%')
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    logger.info('Training time {}'.format(total_time_str))
+    logging.info('Training time {}'.format(total_time_str))
 
 
 def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler, loss_scaler):
@@ -185,6 +215,12 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
         if mixup_fn is not None:
             samples, targets = mixup_fn(samples, targets)
 
+        global_idx = (epoch * num_steps + idx) // config.TRAIN.ACCUMULATION_STEPS
+        if idx % config.TRAIN.ACCUMULATION_STEPS == 0 and global_idx % 10 == 0:
+            set_batch_count(
+                model, global_idx * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
+            )
+
         with torch.cuda.amp.autocast(enabled=config.AMP_ENABLE):
             outputs = model(samples)
         loss = criterion(outputs, targets)
@@ -197,8 +233,23 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                                 update_grad=(idx + 1) % config.TRAIN.ACCUMULATION_STEPS == 0)
         if (idx + 1) % config.TRAIN.ACCUMULATION_STEPS == 0:
             optimizer.zero_grad()
-            lr_scheduler.step_batch((epoch * num_steps + idx) // config.TRAIN.ACCUMULATION_STEPS)
-        loss_scale_value = loss_scaler.state_dict()["scale"]
+            lr_scheduler.step_batch(global_idx)
+
+        if config.AMP_ENABLE and global_idx % 100 == 0:
+            # If the grad scale was less than 1, try increasing it.    The _growth_interval
+            # of the grad scaler is configurable, but we can't configure it to have different
+            # behavior depending on the current grad scale.
+            cur_grad_scale = loss_scaler.state_dict()["scale"]
+            if cur_grad_scale < 8.0 or (cur_grad_scale < 32.0 and global_idx % 400 == 0):
+                loss_scaler._scaler.update(cur_grad_scale * 2.0)
+            if cur_grad_scale < 0.01:
+                logging.warning(f"Grad scale is small: {cur_grad_scale}")
+            if cur_grad_scale < 1.0e-05:
+                raise RuntimeError(
+                    f"grad_scale is too small, exiting: {cur_grad_scale}"
+                )
+
+        loss_scale_value = loss_scaler.state_dict()["scale"] if config.AMP_ENABLE else 1.0
 
         torch.cuda.synchronize()
 
@@ -209,11 +260,14 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
         batch_time.update(time.time() - end)
         end = time.time()
 
+        if config.TRAIN.PRINT_DIAGNOSTICS and idx == 5:
+            return
+
         if idx % config.PRINT_FREQ == 0:
             lr = optimizer.param_groups[0]['lr']
             memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
             etas = batch_time.avg * (num_steps - idx)
-            logger.info(
+            logging.info(
                 f'Train: [{epoch}/{config.TRAIN.EPOCHS}][{idx}/{num_steps}]\t'
                 f'eta {datetime.timedelta(seconds=int(etas))} lr {lr:.6f}\t'
                 f'time {batch_time.val:.4f} ({batch_time.avg:.4f})\t'
@@ -222,7 +276,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 f'loss_scale {scaler_meter.val:.4f} ({scaler_meter.avg:.4f})\t'
                 f'mem {memory_used:.0f}MB')
     epoch_time = time.time() - start
-    logger.info(f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}")
+    logging.info(f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}")
 
 
 @torch.no_grad()
@@ -262,19 +316,19 @@ def validate(config, data_loader, model):
 
         if idx % config.PRINT_FREQ == 0:
             memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
-            logger.info(
+            logging.info(
                 f'Test: [{idx}/{len(data_loader)}]\t'
                 f'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                 f'Loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})\t'
                 f'Acc@1 {acc1_meter.val:.3f} ({acc1_meter.avg:.3f})\t'
                 f'Acc@5 {acc5_meter.val:.3f} ({acc5_meter.avg:.3f})\t'
                 f'Mem {memory_used:.0f}MB')
-    logger.info(f' * Acc@1 {acc1_meter.avg:.3f} Acc@5 {acc5_meter.avg:.3f}')
+    logging.info(f' * Acc@1 {acc1_meter.avg:.3f} Acc@5 {acc5_meter.avg:.3f}')
     return acc1_meter.avg, acc5_meter.avg, loss_meter.avg
 
 
 @torch.no_grad()
-def throughput(data_loader, model, logger):
+def throughput(data_loader, model):
     model.eval()
 
     for idx, (images, _) in enumerate(data_loader):
@@ -283,13 +337,13 @@ def throughput(data_loader, model, logger):
         for i in range(50):
             model(images)
         torch.cuda.synchronize()
-        logger.info("throughput averaged with 30 times")
+        logging.info("throughput averaged with 30 times")
         tic1 = time.time()
         for i in range(30):
             model(images)
         torch.cuda.synchronize()
         tic2 = time.time()
-        logger.info(f"batch_size {batch_size} throughput {30 * batch_size / (tic2 - tic1)}")
+        logging.info(f"batch_size {batch_size} throughput {30 * batch_size / (tic2 - tic1)}")
         return
 
 
@@ -318,16 +372,16 @@ if __name__ == '__main__':
     cudnn.benchmark = True
 
     os.makedirs(config.OUTPUT, exist_ok=True)
-    logger = create_logger(output_dir=config.OUTPUT, dist_rank=dist.get_rank(), name=f"{config.MODEL.NAME}")
+    setup_logger(f"{config.OUTPUT}/log/log-train")
 
-    if dist.get_rank() == 0:
+    if dist.get_rank() == 0 and not config.EVAL_MODE and not config.TRAIN.PRINT_DIAGNOSTICS:
         path = os.path.join(config.OUTPUT, "config.json")
         with open(path, "w") as f:
             f.write(config.dump())
-        logger.info(f"Full config saved to {path}")
+        logging.info(f"Full config saved to {path}")
 
     # print config
-    logger.info(config.dump())
-    logger.info(json.dumps(vars(args)))
+    logging.info(config.dump())
+    logging.info(json.dumps(vars(args)))
 
     main(config)
