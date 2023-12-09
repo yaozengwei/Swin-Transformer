@@ -10,8 +10,11 @@ from .swin_transformer_v2 import SwinTransformerV2
 from .swin_transformer_moe import SwinTransformerMoE
 from .swin_mlp import SwinMLP
 from .simmim import build_simmim
-from .swin_share_attn import SwinTransformer as SwinTransformer2
-from .swin_share_attn_3_ff import SwinTransformer as SwinTransformer3
+# from .swin_share_attn import SwinTransformer as SwinTransformer2
+# from .swin_share_attn_3_ff import SwinTransformer as SwinTransformer3
+# from .swin_share_attn_new_dim import SwinTransformer as SwinTransformer4
+# from .swin_share_attn_1_ff import SwinTransformer as SwinTransformer5
+from .swin_transformer2 import SwinTransformer as SwinTransformer2
 
 
 def build_model(config, is_pretrain=False):
@@ -59,49 +62,116 @@ def build_model(config, is_pretrain=False):
     elif model_type == "swin2":
         model = SwinTransformer2(
             img_size=config.DATA.IMG_SIZE,
-            patch_size=config.MODEL.SWIN2.PATCH_SIZE,
-            in_chans=config.MODEL.SWIN2.IN_CHANS,
+            patch_size=config.MODEL.SWIN.PATCH_SIZE,
+            in_chans=config.MODEL.SWIN.IN_CHANS,
             num_classes=config.MODEL.NUM_CLASSES,
-            embed_dim=config.MODEL.SWIN2.EMBED_DIM,
-            depths=config.MODEL.SWIN2.DEPTHS,
-            num_heads=config.MODEL.SWIN2.NUM_HEADS,
-            query_head_dims=config.MODEL.SWIN2.QUERY_HEAD_DIMS,
-            value_head_dims=config.MODEL.SWIN2.VALUE_HEAD_DIMS,
-            window_size=config.MODEL.SWIN2.WINDOW_SIZE,
-            mlp_ratio=config.MODEL.SWIN2.MLP_RATIO,
-            qkv_bias=config.MODEL.SWIN2.QKV_BIAS,
-            qk_scale=config.MODEL.SWIN2.QK_SCALE,
+            embed_dim=config.MODEL.SWIN.EMBED_DIM,
+            depths=config.MODEL.SWIN.DEPTHS,
+            num_heads=config.MODEL.SWIN.NUM_HEADS,
+            window_size=config.MODEL.SWIN.WINDOW_SIZE,
+            mlp_ratio=config.MODEL.SWIN.MLP_RATIO,
+            qkv_bias=config.MODEL.SWIN.QKV_BIAS,
+            qk_scale=config.MODEL.SWIN.QK_SCALE,
             drop_rate=config.MODEL.DROP_RATE,
             drop_path_rate=config.MODEL.DROP_PATH_RATE,
-            ape=config.MODEL.SWIN2.APE,
+            ape=config.MODEL.SWIN.APE,
             norm_layer=layernorm,
-            patch_norm=config.MODEL.SWIN2.PATCH_NORM,
+            patch_norm=config.MODEL.SWIN.PATCH_NORM,
             use_checkpoint=config.TRAIN.USE_CHECKPOINT,
             fused_window_process=config.FUSED_WINDOW_PROCESS,
         )
-    elif model_type == "swin3":
-        model = SwinTransformer3(
-            img_size=config.DATA.IMG_SIZE,
-            patch_size=config.MODEL.SWIN2.PATCH_SIZE,
-            in_chans=config.MODEL.SWIN2.IN_CHANS,
-            num_classes=config.MODEL.NUM_CLASSES,
-            embed_dim=config.MODEL.SWIN2.EMBED_DIM,
-            depths=config.MODEL.SWIN2.DEPTHS,
-            num_heads=config.MODEL.SWIN2.NUM_HEADS,
-            query_head_dims=config.MODEL.SWIN2.QUERY_HEAD_DIMS,
-            value_head_dims=config.MODEL.SWIN2.VALUE_HEAD_DIMS,
-            window_size=config.MODEL.SWIN2.WINDOW_SIZE,
-            mlp_ratio=config.MODEL.SWIN2.MLP_RATIO,
-            qkv_bias=config.MODEL.SWIN2.QKV_BIAS,
-            qk_scale=config.MODEL.SWIN2.QK_SCALE,
-            drop_rate=config.MODEL.DROP_RATE,
-            drop_path_rate=config.MODEL.DROP_PATH_RATE,
-            ape=config.MODEL.SWIN2.APE,
-            norm_layer=layernorm,
-            patch_norm=config.MODEL.SWIN2.PATCH_NORM,
-            use_checkpoint=config.TRAIN.USE_CHECKPOINT,
-            fused_window_process=config.FUSED_WINDOW_PROCESS,
-        )
+    # elif model_type == "swin2":
+    #     model = SwinTransformer2(
+    #         img_size=config.DATA.IMG_SIZE,
+    #         patch_size=config.MODEL.SWIN2.PATCH_SIZE,
+    #         in_chans=config.MODEL.SWIN2.IN_CHANS,
+    #         num_classes=config.MODEL.NUM_CLASSES,
+    #         embed_dim=config.MODEL.SWIN2.EMBED_DIM,
+    #         depths=config.MODEL.SWIN2.DEPTHS,
+    #         num_heads=config.MODEL.SWIN2.NUM_HEADS,
+    #         query_head_dims=config.MODEL.SWIN2.QUERY_HEAD_DIMS,
+    #         value_head_dims=config.MODEL.SWIN2.VALUE_HEAD_DIMS,
+    #         window_size=config.MODEL.SWIN2.WINDOW_SIZE,
+    #         mlp_ratio=config.MODEL.SWIN2.MLP_RATIO,
+    #         qkv_bias=config.MODEL.SWIN2.QKV_BIAS,
+    #         qk_scale=config.MODEL.SWIN2.QK_SCALE,
+    #         drop_rate=config.MODEL.DROP_RATE,
+    #         drop_path_rate=config.MODEL.DROP_PATH_RATE,
+    #         ape=config.MODEL.SWIN2.APE,
+    #         norm_layer=layernorm,
+    #         patch_norm=config.MODEL.SWIN2.PATCH_NORM,
+    #         use_checkpoint=config.TRAIN.USE_CHECKPOINT,
+    #         fused_window_process=config.FUSED_WINDOW_PROCESS,
+    #     )
+    # elif model_type == "swin3":
+    #     model = SwinTransformer3(
+    #         img_size=config.DATA.IMG_SIZE,
+    #         patch_size=config.MODEL.SWIN2.PATCH_SIZE,
+    #         in_chans=config.MODEL.SWIN2.IN_CHANS,
+    #         num_classes=config.MODEL.NUM_CLASSES,
+    #         embed_dim=config.MODEL.SWIN2.EMBED_DIM,
+    #         depths=config.MODEL.SWIN2.DEPTHS,
+    #         num_heads=config.MODEL.SWIN2.NUM_HEADS,
+    #         query_head_dims=config.MODEL.SWIN2.QUERY_HEAD_DIMS,
+    #         value_head_dims=config.MODEL.SWIN2.VALUE_HEAD_DIMS,
+    #         window_size=config.MODEL.SWIN2.WINDOW_SIZE,
+    #         mlp_ratio=config.MODEL.SWIN2.MLP_RATIO,
+    #         qkv_bias=config.MODEL.SWIN2.QKV_BIAS,
+    #         qk_scale=config.MODEL.SWIN2.QK_SCALE,
+    #         drop_rate=config.MODEL.DROP_RATE,
+    #         drop_path_rate=config.MODEL.DROP_PATH_RATE,
+    #         ape=config.MODEL.SWIN2.APE,
+    #         norm_layer=layernorm,
+    #         patch_norm=config.MODEL.SWIN2.PATCH_NORM,
+    #         use_checkpoint=config.TRAIN.USE_CHECKPOINT,
+    #         fused_window_process=config.FUSED_WINDOW_PROCESS,
+    #     )
+    # elif model_type == "swin4":
+    #     model = SwinTransformer4(
+    #         img_size=config.DATA.IMG_SIZE,
+    #         patch_size=config.MODEL.SWIN4.PATCH_SIZE,
+    #         in_chans=config.MODEL.SWIN4.IN_CHANS,
+    #         num_classes=config.MODEL.NUM_CLASSES,
+    #         embed_dims=config.MODEL.SWIN4.EMBED_DIMS,
+    #         depths=config.MODEL.SWIN4.DEPTHS,
+    #         num_heads=config.MODEL.SWIN4.NUM_HEADS,
+    #         query_head_dims=config.MODEL.SWIN4.QUERY_HEAD_DIMS,
+    #         value_head_dims=config.MODEL.SWIN4.VALUE_HEAD_DIMS,
+    #         window_size=config.MODEL.SWIN4.WINDOW_SIZE,
+    #         mlp_ratio=config.MODEL.SWIN4.MLP_RATIO,
+    #         qkv_bias=config.MODEL.SWIN4.QKV_BIAS,
+    #         qk_scale=config.MODEL.SWIN4.QK_SCALE,
+    #         drop_rate=config.MODEL.DROP_RATE,
+    #         drop_path_rate=config.MODEL.DROP_PATH_RATE,
+    #         ape=config.MODEL.SWIN4.APE,
+    #         norm_layer=layernorm,
+    #         patch_norm=config.MODEL.SWIN4.PATCH_NORM,
+    #         use_checkpoint=config.TRAIN.USE_CHECKPOINT,
+    #         fused_window_process=config.FUSED_WINDOW_PROCESS,
+    #     )
+    # elif model_type == "swin5":
+    #     model = SwinTransformer5(
+    #         img_size=config.DATA.IMG_SIZE,
+    #         patch_size=config.MODEL.SWIN2.PATCH_SIZE,
+    #         in_chans=config.MODEL.SWIN2.IN_CHANS,
+    #         num_classes=config.MODEL.NUM_CLASSES,
+    #         embed_dim=config.MODEL.SWIN2.EMBED_DIM,
+    #         depths=config.MODEL.SWIN2.DEPTHS,
+    #         num_heads=config.MODEL.SWIN2.NUM_HEADS,
+    #         query_head_dims=config.MODEL.SWIN2.QUERY_HEAD_DIMS,
+    #         value_head_dims=config.MODEL.SWIN2.VALUE_HEAD_DIMS,
+    #         window_size=config.MODEL.SWIN2.WINDOW_SIZE,
+    #         mlp_ratio=config.MODEL.SWIN2.MLP_RATIO,
+    #         qkv_bias=config.MODEL.SWIN2.QKV_BIAS,
+    #         qk_scale=config.MODEL.SWIN2.QK_SCALE,
+    #         drop_rate=config.MODEL.DROP_RATE,
+    #         drop_path_rate=config.MODEL.DROP_PATH_RATE,
+    #         ape=config.MODEL.SWIN2.APE,
+    #         norm_layer=layernorm,
+    #         patch_norm=config.MODEL.SWIN2.PATCH_NORM,
+    #         use_checkpoint=config.TRAIN.USE_CHECKPOINT,
+    #         fused_window_process=config.FUSED_WINDOW_PROCESS,
+    #     )
     elif model_type == "swinv2":
         model = SwinTransformerV2(
             img_size=config.DATA.IMG_SIZE,

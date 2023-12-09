@@ -232,6 +232,7 @@ _C.TRAIN.MOE = CN()
 _C.TRAIN.MOE.SAVE_MASTER = False
 
 _C.TRAIN.PRINT_DIAGNOSTICS = False
+_C.TRAIN.INF_CHECK = False
 
 # -----------------------------------------------------------------------------
 # Augmentation settings

@@ -15,4 +15,4 @@ TRAIN:
   LR_EPOCHES: 30
   CLIP_GRAD: None
   OPTIMIZER:
-    BETAS: (0.9, 0.98)
+    BETAS: (0.9, 0.95)

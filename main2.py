@@ -138,8 +138,7 @@ def main(config):
 
     max_accuracy = 0.0
 
-    # if config.TRAIN.AUTO_RESUME:
-    if False:
+    if config.TRAIN.AUTO_RESUME:
         resume_file = auto_resume_helper(config.OUTPUT)
         if resume_file:
             if config.MODEL.RESUME:

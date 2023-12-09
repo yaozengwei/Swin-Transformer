@@ -13,6 +13,7 @@ import argparse
 import datetime
 import numpy as np
 
+import diagnostics
 import torch
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
@@ -72,9 +73,11 @@ def parse_option():
     parser.add_argument('--fused_window_process', action='store_true',
                         help='Fused window shift & window partition, similar for reversed part.')
     parser.add_argument('--fused_layernorm', action='store_true', help='Use fused layernorm.')
-    ## overwrite optimizer in config (*.yaml) if specified, e.g., fused_adam/fused_lamb
+    # overwrite optimizer in config (*.yaml) if specified, e.g., fused_adam/fused_lamb
     parser.add_argument('--optim', type=str,
                         help='overwrite optimizer if provided, can be adamw/sgd/fused_adam/fused_lamb.')
+    parser.add_argument('--print_diagnostics', action='store_true',
+                        help='Accumulate stats on activations, print them and exit.')
 
     args, unparsed = parser.parse_known_args()
 
@@ -138,10 +141,11 @@ def main(config):
 
     if config.MODEL.RESUME:
         max_accuracy = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, loss_scaler, logger)
-        acc1, acc5, loss = validate(config, data_loader_val, model)
-        logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
-        if config.EVAL_MODE:
-            return
+        if not config.TRAIN.PRINT_DIAGNOSTICS:
+            acc1, acc5, loss = validate(config, data_loader_val, model)
+            logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
+            if config.EVAL_MODE:
+                return
 
     if config.MODEL.PRETRAINED and (not config.MODEL.RESUME):
         load_pretrained(config, model_without_ddp, logger)
@@ -152,6 +156,12 @@ def main(config):
         throughput(data_loader_val, model, logger)
         return
 
+    if config.TRAIN.PRINT_DIAGNOSTICS:
+        opts = diagnostics.TensorDiagnosticOptions(
+            512
+        )  # allow 4 megabytes per sub-module
+        diagnostic = diagnostics.attach_diagnostics(model, opts)
+
     logger.info("Start training")
     start_time = time.time()
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
@@ -159,6 +169,11 @@ def main(config):
 
         train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler,
                         loss_scaler)
+
+        if config.TRAIN.PRINT_DIAGNOSTICS:
+            diagnostic.print_diagnostics()
+            return
+
         if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
             save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, loss_scaler,
                             logger)
@@ -215,6 +230,9 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
         scaler_meter.update(loss_scale_value)
         batch_time.update(time.time() - end)
         end = time.time()
+
+        if config.TRAIN.PRINT_DIAGNOSTICS and idx == 5:
+            return
 
         if idx % config.PRINT_FREQ == 0:
             lr = optimizer.param_groups[0]['lr']
@@ -341,14 +359,21 @@ if __name__ == '__main__':
     config.freeze()
 
     os.makedirs(config.OUTPUT, exist_ok=True)
+
+    suffix = None
+    if config.TRAIN.PRINT_DIAGNOSTICS:
+        suffix = "diagnostic"
+    elif config.EVAL_MODE:
+        suffix = f"eval-epoch-{config.EVAL_EPOCH}-avg-{config.EVAL_AVG}"
+
     logger = create_logger(
         output_dir=config.OUTPUT,
         dist_rank=dist.get_rank(),
         name=f"{config.MODEL.NAME}",
-        suffix=f"eval-epoch-{config.EVAL_EPOCH}-avg-{config.EVAL_AVG}" if config.EVAL_MODE else None,
+        suffix=suffix,
     )
 
-    if dist.get_rank() == 0 and not config.EVAL_MODE:
+    if dist.get_rank() == 0 and not config.EVAL_MODE and not config.TRAIN.PRINT_DIAGNOSTICS:
         path = os.path.join(config.OUTPUT, "config.json")
         with open(path, "w") as f:
             f.write(config.dump())
