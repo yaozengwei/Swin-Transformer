@@ -77,6 +77,9 @@ def parse_option():
     # overwrite optimizer in config (*.yaml) if specified, e.g., fused_adam/fused_lamb
     parser.add_argument('--optim', type=str,
                         help='overwrite optimizer if provided, can be adamw/sgd/fused_adam/fused_lamb.')
+
+    parser.add_argument('--disable_auto_resume', action='store_true',
+                        help='Disable auto resuming from latest checkpoint.')
     parser.add_argument('--print_diagnostics', action='store_true',
                         help='Accumulate stats on activations, print them and exit.')
     parser.add_argument('--inf_check', action='store_true',
@@ -120,7 +123,6 @@ def main(config):
         get_parameter_groups_with_lrs(model, lr=config.TRAIN.BASE_LR, include_names=True),
         lr=config.TRAIN.BASE_LR,  # should have no effect
         clipping_scale=2.0,
-        betas=config.TRAIN.OPTIMIZER.BETAS,
     )
     assert config.TRAIN.ACCUMULATION_STEPS == 1, "Not support gradient accumulation yet."
     lr_scheduler = Eden(optimizer, config.TRAIN.LR_BATCHES, config.TRAIN.LR_EPOCHES)
@@ -265,7 +267,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
         batch_time.update(time.time() - end)
         end = time.time()
 
-        if config.TRAIN.PRINT_DIAGNOSTICS and idx == 5:
+        if config.TRAIN.PRINT_DIAGNOSTICS and idx == 10:
             return
 
         if idx % config.PRINT_FREQ == 0:

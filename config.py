@@ -181,9 +181,8 @@ _C.TRAIN.START_EPOCH = 0
 _C.TRAIN.EPOCHS = 300
 _C.TRAIN.WARMUP_EPOCHS = 20
 _C.TRAIN.WEIGHT_DECAY = 0.05
-_C.TRAIN.BASE_LR = 5e-4
 # Only for ScaledAdam optimizer ----
-_C.TRAIN.LR_EPOCHES = 30
+_C.TRAIN.LR_EPOCHES = 10
 _C.TRAIN.LR_BATCHES = 7500
 # ----------------------------------
 _C.TRAIN.BASE_LR = 5e-4
@@ -231,6 +230,7 @@ _C.TRAIN.MOE = CN()
 # Only save model on master device
 _C.TRAIN.MOE.SAVE_MASTER = False
 
+# For model diagnostics
 _C.TRAIN.PRINT_DIAGNOSTICS = False
 _C.TRAIN.INF_CHECK = False
 
@@ -343,6 +343,8 @@ def update_config(config, args):
         config.DATA.CACHE_MODE = args.cache_mode
     if _check_args('pretrained'):
         config.MODEL.PRETRAINED = args.pretrained
+    if _check_args('disable_auto_resume'):
+        config.MODEL.AUTO_RESUME = False
     if _check_args('resume'):
         config.MODEL.RESUME = args.resume
     if _check_args('accumulation_steps'):
