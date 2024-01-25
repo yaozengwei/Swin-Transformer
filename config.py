@@ -234,6 +234,8 @@ _C.TRAIN.MOE.SAVE_MASTER = False
 _C.TRAIN.PRINT_DIAGNOSTICS = False
 _C.TRAIN.INF_CHECK = False
 
+_C.TRAIN.TENSORBOARD = False
+
 # -----------------------------------------------------------------------------
 # Augmentation settings
 # -----------------------------------------------------------------------------
@@ -387,6 +389,9 @@ def update_config(config, args):
         config.TRAIN.PRINT_DIAGNOSTICS = True
     if _check_args('inf_check'):
         config.TRAIN.INF_CHECK = True
+
+    if _check_args('tensorboard'):
+        config.TRAIN.TENSORBOARD = True
 
     # set local rank for distributed training
     config.LOCAL_RANK = args.local_rank
