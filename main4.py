@@ -30,8 +30,7 @@ from config import get_config
 from hooks import register_inf_check_hooks
 from models import build_model
 from data import build_loader
-from lr_scheduler import build_scheduler
-from optimizer import build_optimizer
+from scaled_adam import Eden, ScaledAdam, get_parameter_groups_with_lrs
 from utils import load_checkpoint, load_pretrained, save_checkpoint, setup_logger, NativeScalerWithGradNormCount, auto_resume_helper, \
     reduce_tensor
 
@@ -123,13 +122,18 @@ def main(config):
     model.cuda()
     model_without_ddp = model
 
-    optimizer = build_optimizer(config, model)
+    optimizer = ScaledAdam(
+        get_parameter_groups_with_lrs(model, lr=config.TRAIN.BASE_LR, include_names=True),
+        lr=config.TRAIN.BASE_LR,  # should have no effect
+        clipping_scale=2.0,
+    )
 
     # assert config.TRAIN.ACCUMULATION_STEPS == 1, "Not support gradient accumulation yet."
-    if config.TRAIN.ACCUMULATION_STEPS > 1:
-        lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train) // config.TRAIN.ACCUMULATION_STEPS)
-    else:
-        lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
+    lr_scheduler = Eden(optimizer,
+                        lr_batches=config.TRAIN.LR_SCHEDULER.LR_BATCHES,
+                        lr_epochs=config.TRAIN.LR_SCHEDULER.LR_EPOCHES,
+                        warmup_batches=config.TRAIN.WARMUP_EPOCHS * len(data_loader_train),
+                        warmup_start=config.TRAIN.WARMUP_LR)
 
     model = DDP(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
     loss_scaler = NativeScalerWithGradNormCount(amp_enabled=config.AMP_ENABLE, init_scale=1.0)
@@ -191,6 +195,7 @@ def main(config):
     start_time = time.time()
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
         data_loader_train.sampler.set_epoch(epoch)
+        lr_scheduler.step_epoch(epoch)
         train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler,
                         loss_scaler, tb_writer=tb_writer)
 
@@ -225,7 +230,6 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
     num_steps = len(data_loader)
     batch_time = AverageMeter()
     loss_meter = AverageMeter()
-    norm_meter = AverageMeter()
     scaler_meter = AverageMeter()
 
     start = time.time()
@@ -250,12 +254,13 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
 
         # this attribute is added by timm on one optimizer (adahessian)
         is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
-        grad_norm = loss_scaler(loss, optimizer, clip_grad=config.TRAIN.CLIP_GRAD,
-                                parameters=model.parameters(), create_graph=is_second_order,
-                                update_grad=(idx + 1) % config.TRAIN.ACCUMULATION_STEPS == 0)
+        loss_scaler(loss, optimizer, clip_grad=None,
+                    parameters=model.parameters(), create_graph=is_second_order,
+                    update_grad=(idx + 1) % config.TRAIN.ACCUMULATION_STEPS == 0,
+                    return_norm=False)
         if (idx + 1) % config.TRAIN.ACCUMULATION_STEPS == 0:
             optimizer.zero_grad()
-            lr_scheduler.step_update((epoch * num_steps + idx) // config.TRAIN.ACCUMULATION_STEPS)
+            lr_scheduler.step_batch(global_idx)
 
         if config.AMP_ENABLE and global_idx % 100 == 0:
             # If the grad scale was less than 1, try increasing it.    The _growth_interval
@@ -276,8 +281,6 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
         torch.cuda.synchronize()
 
         loss_meter.update(loss.item(), targets.size(0))
-        if grad_norm is not None:  # loss_scaler return None if not update
-            norm_meter.update(grad_norm)
         scaler_meter.update(loss_scale_value)
         batch_time.update(time.time() - end)
         end = time.time()
@@ -287,14 +290,12 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
 
         if idx % config.PRINT_FREQ == 0:
             lr = optimizer.param_groups[0]['lr']
-            wd = optimizer.param_groups[0]['weight_decay']
             memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
             etas = batch_time.avg * (num_steps - idx)
             logging.info(
                 f'Train: [{epoch}/{config.TRAIN.EPOCHS}][{idx}/{num_steps}]\t'
-                f'eta {datetime.timedelta(seconds=int(etas))} lr {lr:.6f}\t wd {wd:.4f}\t'
+                f'eta {datetime.timedelta(seconds=int(etas))} lr {lr:.6f}\t'
                 f'time {batch_time.val:.4f} ({batch_time.avg:.4f})\t'
-                f'grad_norm {norm_meter.val:.4f} ({norm_meter.avg:.4f})\t'
                 f'loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})\t'
                 f'loss_scale {scaler_meter.val:.4f} ({scaler_meter.avg:.4f})\t'
                 f'mem {memory_used:.0f}MB')
@@ -304,7 +305,6 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 tb_writer.add_scalar("train/tot_loss", loss_meter.avg, global_idx)
                 tb_writer.add_scalar("train/lr", lr, global_idx)
                 tb_writer.add_scalar("train/loss_scale", scaler_meter.val, global_idx)
-                tb_writer.add_scalar("train/grad_norm", norm_meter.val, global_idx)
 
     epoch_time = time.time() - start
     logging.info(f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}")
@@ -402,21 +402,6 @@ if __name__ == '__main__':
     np.random.seed(seed)
     random.seed(seed)
     cudnn.benchmark = True
-
-    # linear scale the learning rate according to total batch size, may not be optimal
-    linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
-    linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
-    linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
-    # gradient accumulation also need to scale the learning rate
-    if config.TRAIN.ACCUMULATION_STEPS > 1:
-        linear_scaled_lr = linear_scaled_lr * config.TRAIN.ACCUMULATION_STEPS
-        linear_scaled_warmup_lr = linear_scaled_warmup_lr * config.TRAIN.ACCUMULATION_STEPS
-        linear_scaled_min_lr = linear_scaled_min_lr * config.TRAIN.ACCUMULATION_STEPS
-    config.defrost()
-    config.TRAIN.BASE_LR = linear_scaled_lr
-    config.TRAIN.WARMUP_LR = linear_scaled_warmup_lr
-    config.TRAIN.MIN_LR = linear_scaled_min_lr
-    config.freeze()
 
     os.makedirs(config.OUTPUT, exist_ok=True)
     setup_logger(f"{config.OUTPUT}/log/log-train")
