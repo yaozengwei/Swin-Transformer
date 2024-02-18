@@ -127,6 +127,9 @@ def main(config):
         get_parameter_groups_with_lrs(model, lr=config.TRAIN.BASE_LR, include_names=True),
         lr=config.TRAIN.BASE_LR,  # should have no effect
         clipping_scale=2.0,
+        betas=config.TRAIN.OPTIMIZER.BETAS,
+        param_max_rms=config.TRAIN.OPTIMIZER.PARAM_MAX_RMS,
+        param_min_rms=config.TRAIN.OPTIMIZER.PARAM_MIN_RMS,
     )
 
     # assert config.TRAIN.ACCUMULATION_STEPS == 1, "Not support gradient accumulation yet."

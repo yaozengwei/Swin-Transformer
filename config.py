@@ -182,8 +182,6 @@ _C.TRAIN.EPOCHS = 300
 _C.TRAIN.WARMUP_EPOCHS = 20
 _C.TRAIN.WEIGHT_DECAY = 0.05
 # Only for ScaledAdam optimizer ----
-_C.TRAIN.LR_EPOCHES = 10
-_C.TRAIN.LR_BATCHES = 7500
 # ----------------------------------
 _C.TRAIN.BASE_LR = 5e-4
 _C.TRAIN.WARMUP_LR = 5e-7
@@ -211,6 +209,9 @@ _C.TRAIN.LR_SCHEDULER.WARMUP_PREFIX = True
 # [SimMIM] Gamma / Multi steps value, used in MultiStepLRScheduler
 _C.TRAIN.LR_SCHEDULER.GAMMA = 0.1
 _C.TRAIN.LR_SCHEDULER.MULTISTEPS = []
+# Eden scheduler
+_C.TRAIN.LR_SCHEDULER.LR_EPOCHES = 20
+_C.TRAIN.LR_SCHEDULER.LR_BATCHES = 15000
 
 # Optimizer
 _C.TRAIN.OPTIMIZER = CN()
@@ -221,6 +222,9 @@ _C.TRAIN.OPTIMIZER.EPS = 1e-8
 _C.TRAIN.OPTIMIZER.BETAS = (0.9, 0.999)
 # SGD momentum
 _C.TRAIN.OPTIMIZER.MOMENTUM = 0.9
+# ScaledAdam
+_C.TRAIN.OPTIMIZER.PARAM_MAX_RMS = 5.0
+_C.TRAIN.OPTIMIZER.PARAM_MIN_RMS = 1.0e-3
 
 # [SimMIM] Layer decay for fine-tuning
 _C.TRAIN.LAYER_DECAY = 1.0
@@ -346,7 +350,7 @@ def update_config(config, args):
     if _check_args('pretrained'):
         config.MODEL.PRETRAINED = args.pretrained
     if _check_args('disable_auto_resume'):
-        config.MODEL.AUTO_RESUME = False
+        config.TRAIN.AUTO_RESUME = False
     if _check_args('resume'):
         config.MODEL.RESUME = args.resume
     if _check_args('accumulation_steps'):
