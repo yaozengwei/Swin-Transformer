@@ -10,10 +10,10 @@ MODEL:
 
 # for ScaledAdam optimizer
 TRAIN:
-  BASE_LR: 0.015
+  BASE_LR: 0.025
   WARMUP_EPOCHS: 2
-  EPOCHS: 300
+  EPOCHS: 100
   OPTIMIZER:
     BETAS: (0.9, 0.999)
-    PARAM_MIN_RMS: 1.0e-3
-    PARAM_MAX_RMS: 5.0
+    PARAM_MIN_RMS: 1.0e-5
+    PARAM_MAX_RMS: 3.0
